@@ -2,14 +2,13 @@
 
 **High-performance CSV, Excel, and PowerPoint to PDF converter for Laravel, powered by Go for maximum speed and minimal resource usage.**
 
-🚀 **50-70% faster** than pure PHP solutions  
-💾 **Low memory footprint** - handles large files without exhausting memory  
-🔧 **Zero external dependencies** - no LibreOffice required for most conversions  
-⚡ **Queue-ready** - dispatch conversions to background jobs  
-🎨 **Professional Table Rendering** - grid lines, smart alignment, and centered layouts for Excel/CSV
-🌈 **Smart Color Fallback** - automatically fixes white-on-white text in PowerPoint conversions
-📝 **Global Headers & Footers** - add custom text and mandatory "Page X of Y" numbering to every page
-
+- 🚀 **50-70% faster** than pure PHP solutions  
+- 💾 **Low memory footprint** – handles large files without exhausting memory  
+- 🔧 **Zero external dependencies** – no LibreOffice required for most conversions  
+- ⚡ **Queue-ready** – dispatch conversions to background jobs  
+- 🎨 **Professional Table Rendering** – grid lines, smart alignment, and centered layouts for Excel/CSV  
+- 🌈 **Smart Color Fallback** – automatically fixes white-on-white text in PowerPoint conversions  
+- 📝 **Global Headers & Footers** – add custom text and mandatory "Page X of Y" numbering
 
 ---
 
@@ -316,7 +315,6 @@ php artisan pdf:convert input.xlsx output.pdf \
 
 # Async via queue
 php artisan pdf:convert input.csv output.pdf --queue
-```
 
 #### Install/Update Binary
 
@@ -397,15 +395,15 @@ GOPDF_LOG_CHANNEL=stack
 
 ### Benchmarks
 
-Tested on standard hardware (4-core CPU, 16GB RAM):
+Tested on standard hardware (2-core CPU, 8GB RAM) using samples files:
 
-| File Type | File Size | This Package | Pure PHP |
-|-----------|-----------|--------------|----------|
-| CSV | 1 MB | ~200ms | ~2s |
-| CSV | 10 MB | ~1.5s | ~15s |
-| CSV | 100 MB | ~12s | Memory error |
-| Excel | 5 MB | ~800ms | ~8s |
-| PPTX | 10 slides | ~500ms | ~5s |
+| File Type | File Size | This Package | Notes |
+|-----------|-----------|--------------|-------|
+| **CSV** | 14 MB | ~21s | Large data set conversion |
+| **PPTX** | 15 MB | ~5s | Native Go conversion |
+| **PPT** | 2 MB | ~1.6s | Legacy PowerPoint |
+| **Excel** | 0.5 MB | ~1.2s | Native XLSX conversion |
+| **CSV** | 1 KB | ~10ms | Small file overhead |
 
 ### Memory Usage
 
