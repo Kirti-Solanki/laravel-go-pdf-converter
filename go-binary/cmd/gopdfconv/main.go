@@ -49,14 +49,17 @@ func main() {
 	// Content options
 	headerRow := flag.Bool("header", true, "Treat first row as header (CSV/Excel)")
 	fontSize := flag.Float64("font-size", 10, "Base font size")
-	headerText := flag.String("header-text", "", "Global header text")
-	footerText := flag.String("footer-text", "", "Global footer text")
-	
+	headerText := flag.String("header-text", "", "Global header text (center)")
+	footerText := flag.String("footer-text", "", "Global footer text (left)")
+
 	// Advanced options
 	customFont := flag.String("font", "", "Path to custom TTF font")
 	watermarkText := flag.String("watermark-text", "", "Watermark text")
 	watermarkImage := flag.String("watermark-image", "", "Path to watermark image")
 	watermarkAlpha := flag.Float64("watermark-alpha", 0.2, "Watermark opacity (0.0-1.0)")
+
+	// Smart Layout
+	autoOrientation := flag.Bool("auto-orientation", true, "Automatically switch resolution if needed")
 	
 	// Styling options
 	headerColor := flag.String("header-color", "", "Header background color (hex)")
@@ -91,14 +94,16 @@ func main() {
 	opts.Margin = *margin
 	opts.FontSize = *fontSize
 	opts.HeaderRow = *headerRow
-	opts.HeaderText = *headerText
-	opts.FooterText = *footerText
-	
 	// Advanced options
 	opts.CustomFontPath = *customFont
 	opts.WatermarkText = *watermarkText
 	opts.WatermarkImage = *watermarkImage
 	opts.WatermarkAlpha = *watermarkAlpha
+	
+	// Headers
+	opts.HeaderText = *headerText
+	opts.FooterText = *footerText
+	opts.AutoOrientation = *autoOrientation
 	
 	// Styling options
 	opts.HeaderColor = *headerColor

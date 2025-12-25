@@ -5,7 +5,6 @@ namespace NikunjKothiya\GoPdfConverter;
 use Illuminate\Support\ServiceProvider;
 use NikunjKothiya\GoPdfConverter\Services\GoPdfService;
 use NikunjKothiya\GoPdfConverter\Commands\ConvertCommand;
-use NikunjKothiya\GoPdfConverter\Commands\InstallBinaryCommand;
 
 class GoPdfServiceProvider extends ServiceProvider
 {
@@ -40,6 +39,9 @@ class GoPdfServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // Auto-configure binaries on first boot
+        $this->ensureBinaryIsExecutable();
+
         // Publish config
         if ($this->app->runningInConsole()) {
             $this->publishes([
@@ -49,7 +51,6 @@ class GoPdfServiceProvider extends ServiceProvider
             // Register commands
             $this->commands([
                 ConvertCommand::class,
-                InstallBinaryCommand::class,
             ]);
         }
 
@@ -61,6 +62,71 @@ class GoPdfServiceProvider extends ServiceProvider
     }
 
     /**
+     * Ensure the binary is executable.
+     * This runs automatically on package boot - no manual installation required.
+     */
+    protected function ensureBinaryIsExecutable(): void
+    {
+        $binaryPath = $this->resolveBinaryPath();
+        
+        if ($binaryPath && file_exists($binaryPath) && !is_executable($binaryPath)) {
+            @chmod($binaryPath, 0755);
+        }
+    }
+
+    /**
+     * Resolve the binary path based on OS/architecture.
+     */
+    protected function resolveBinaryPath(): ?string
+    {
+        // Check configured path first
+        $configuredPath = config('gopdf.binary_path');
+        if ($configuredPath && file_exists($configuredPath)) {
+            return $configuredPath;
+        }
+
+        // Auto-detect based on OS/arch
+        $os = PHP_OS_FAMILY === 'Windows' ? 'windows' : strtolower(PHP_OS_FAMILY);
+        $arch = php_uname('m');
+
+        // Normalize architecture
+        if (in_array($arch, ['x86_64', 'amd64', 'AMD64'])) {
+            $arch = 'amd64';
+        } elseif (in_array($arch, ['aarch64', 'arm64', 'ARM64'])) {
+            $arch = 'arm64';
+        }
+
+        // Normalize OS
+        if ($os === 'darwin') {
+            $os = 'darwin';
+        } elseif ($os === 'linux') {
+            $os = 'linux';
+        } elseif ($os === 'windows') {
+            $os = 'windows';
+        }
+
+        // Build binary name
+        $binaryName = "gopdfconv-{$os}-{$arch}";
+        if ($os === 'windows') {
+            $binaryName .= '.exe';
+        }
+
+        // Check in package bin directory
+        $packageBinPath = __DIR__ . '/../bin/' . $binaryName;
+        if (file_exists($packageBinPath)) {
+            return $packageBinPath;
+        }
+
+        // Check for generic binary
+        $genericPath = __DIR__ . '/../bin/gopdfconv';
+        if (file_exists($genericPath)) {
+            return $genericPath;
+        }
+
+        return null;
+    }
+
+    /**
      * Get the services provided by the provider.
      */
     public function provides(): array
@@ -68,3 +134,4 @@ class GoPdfServiceProvider extends ServiceProvider
         return ['gopdf.converter', GoPdfService::class];
     }
 }
+
