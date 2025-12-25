@@ -16,11 +16,24 @@ class PdfGenerationTest extends TestCase
     {
         parent::setUp();
         
-        // Ensure we reference the binary correctly
-        $this->binaryPath = __DIR__ . '/../../go-binary/gopdfconv';
+        // Ensure we reference the binary correctly based on OS
+        $os = PHP_OS_FAMILY === 'Windows' ? 'windows' : strtolower(PHP_OS_FAMILY);
+        $arch = in_array(php_uname('m'), ['x86_64', 'amd64', 'AMD64']) ? 'amd64' : 'arm64';
+        
+        $binaryName = "gopdfconv-{$os}-{$arch}";
+        if ($os === 'windows') {
+            $binaryName .= '.exe';
+        }
+        
+        $this->binaryPath = __DIR__ . '/../../bin/' . $binaryName;
+        
+        // Fallback to generic binary name
+        if (!file_exists($this->binaryPath)) {
+            $this->binaryPath = __DIR__ . '/../../bin/gopdfconv';
+        }
         
         if (!file_exists($this->binaryPath)) {
-            $this->markTestSkipped("Binary not found at {$this->binaryPath}. Please run 'go build' in go-binary directory.");
+            $this->markTestSkipped("Binary not found at {$this->binaryPath}. Run 'php artisan gopdf:install' first.");
         }
 
         // Use the sample fixture

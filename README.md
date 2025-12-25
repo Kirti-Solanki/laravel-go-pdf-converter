@@ -61,47 +61,44 @@ This package ships with compiled binaries for all major OSs (Linux, macOS, Windo
 
 - PHP 8.1+
 - Laravel 10.x, 11.x, or 12.x
-- **No Go installation required** on production/server (pre-compiled binaries included)
+- **No Go installation required** – pre-compiled binaries are included
+- **No LibreOffice required** – optional, only for full PowerPoint fidelity
 
 ---
 
 ## Installation
 
-### Step 1: Install the Package
+Just one command – that's it! 🚀
 
 ```bash
 composer require nikunjkothiya/laravel-go-pdf-converter
 ```
 
-### Step 2: Publish Configuration (Optional)
+**Done!** The package is ready to use. All dependencies are bundled:
+- ✅ Pre-compiled Go binaries for Linux, macOS, and Windows (amd64/arm64)
+- ✅ Auto-detects your operating system and architecture
+- ✅ Automatically configures executable permissions
+- ✅ No additional setup required on local or production servers
+
+### Optional: Publish Configuration
 
 ```bash
 php artisan vendor:publish --tag=gopdf-config
 ```
 
-### Step 3: Install the Go Binary
+### Optional: LibreOffice for Full PowerPoint Fidelity
+
+For best PowerPoint conversion quality (with backgrounds and images), you can optionally install LibreOffice:
 
 ```bash
-php artisan gopdf:install
+# Ubuntu/Debian
+sudo apt-get install libreoffice
+
+# macOS
+brew install --cask libreoffice
 ```
 
-This will automatically:
-1. ✅ Download the correct binary for your platform (Linux/macOS/Windows)
-2. ✅ Check for LibreOffice installation
-3. ✅ Offer to install LibreOffice for full PPT/PPTX support
-
-#### Optional: Install with LibreOffice
-
-```bash
-# Interactive installation with LibreOffice prompt
-php artisan gopdf:install
-
-# Auto-install LibreOffice (requires sudo on Linux)
-php artisan gopdf:install --with-libreoffice
-
-# Skip LibreOffice prompt
-php artisan gopdf:install --skip-libreoffice
-```
+> **Note**: LibreOffice is **completely optional**. Without it, PowerPoint files are still converted using native Go extraction with Smart Color fallback for text visibility.
 
 ---
 
@@ -367,32 +364,27 @@ php artisan pdf:convert input.xlsx output.pdf \
 php artisan pdf:convert input.csv output.pdf --queue
 ```
 
-#### Install/Update Binary
-
-```bash
-# Install binary for current platform
-php artisan gopdf:install
-
-# Force reinstall
-php artisan gopdf:install --force
-
-# Custom install path
-php artisan gopdf:install --path=/usr/local/bin
-```
-
 ---
 
 ## Configuration
 
-After publishing the config file (`config/gopdf.php`):
+Configuration is **optional**. The package works with sensible defaults out of the box.
+
+To customize settings, publish the config file:
+
+```bash
+php artisan vendor:publish --tag=gopdf-config
+```
+
+Then edit `config/gopdf.php`:
 
 ```php
 return [
-    // Custom binary path (default: auto-detect)
-    'binary_path' => env('GOPDF_BINARY_PATH', null),
+    // Binary path is auto-detected - no need to set this
+    // 'binary_path' => env('GOPDF_BINARY_PATH', null),
 
-    // LibreOffice path for PPTX (default: auto-detect)
-    'libreoffice_path' => env('GOPDF_LIBREOFFICE_PATH', null),
+    // LibreOffice path (optional, for full PowerPoint fidelity)
+    // 'libreoffice_path' => env('GOPDF_LIBREOFFICE_PATH', null),
 
     // Default page settings
     'defaults' => [
@@ -409,7 +401,7 @@ return [
         'batch' => 600,
     ],
 
-    // Queue settings
+    // Queue settings (for background processing)
     'queue' => [
         'connection' => null,  // Use default
         'queue' => 'pdf-conversions',
@@ -419,25 +411,24 @@ return [
 ];
 ```
 
-### Environment Variables
+### Environment Variables (Optional)
+
+All environment variables are **optional**. The package works out of the box without any configuration.
 
 ```env
-# Custom binary path
-GOPDF_BINARY_PATH=/path/to/gopdfconv
-
-# LibreOffice for PPTX
-GOPDF_LIBREOFFICE_PATH=/usr/bin/libreoffice
-
-# Queue configuration
+# Queue configuration (if using background processing)
 GOPDF_QUEUE_CONNECTION=redis
 GOPDF_QUEUE_NAME=pdf-conversions
 
-# Batch processing
+# Batch processing workers (default: auto-detect CPU cores)
 GOPDF_BATCH_WORKERS=4
 
-# Logging
+# Logging (default: enabled)
 GOPDF_LOGGING=true
 GOPDF_LOG_CHANNEL=stack
+
+# LibreOffice path (only needed for full PowerPoint fidelity)
+# GOPDF_LIBREOFFICE_PATH=/usr/bin/libreoffice
 ```
 
 ---
@@ -532,18 +523,18 @@ try {
 
 ### Binary Not Found
 
-```bash
-# Check if binary is installed
-php artisan gopdf:install
+The package includes pre-built binaries and auto-configures them. If you encounter issues:
 
-# Or specify path in .env
+```bash
+# Specify a custom binary path in .env
 GOPDF_BINARY_PATH=/path/to/gopdfconv
 ```
 
 ### Permission Denied
 
+The package automatically sets executable permissions. If needed manually:
+
 ```bash
-# Make binary executable
 chmod +x vendor/nikunjkothiya/laravel-go-pdf-converter/bin/gopdfconv-*
 ```
 

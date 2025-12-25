@@ -92,7 +92,6 @@ func main() {
 	// Build PDF options
 	opts := pdf.DefaultOptions()
 	opts.Margin = *margin
-	opts.Margin = *margin
 	opts.FontSize = *fontSize
 	opts.HeaderRow = *headerRow
 	// Advanced options
