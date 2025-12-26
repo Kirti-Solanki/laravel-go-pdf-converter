@@ -149,7 +149,7 @@ class GoPdfService
 
         // Execute conversion
         $timeout = $options['timeout'] ?? $this->timeouts['single'];
-        
+
         $result = Process::timeout($timeout)
             ->run($command);
 
@@ -217,7 +217,7 @@ class GoPdfService
 
         // Execute
         $timeout = $options['timeout'] ?? $this->timeouts['batch'];
-        
+
         $result = Process::timeout($timeout)
             ->run($command);
 

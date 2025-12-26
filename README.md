@@ -2,14 +2,12 @@
 
 **High-performance CSV, Excel, and PowerPoint to PDF converter for Laravel, powered by Go for maximum speed and minimal resource usage.**
 
-- 🚀 **50-70% faster** than pure PHP solutions  
-- 💾 **Low memory footprint** – handles large files without exhausting memory  
-- 🔧 **Zero external dependencies** – no LibreOffice required for most conversions  
-- ⚡ **Queue-ready** – dispatch conversions to background jobs  
-- 🎨 **Professional Table Rendering** – grid lines, smart alignment, and centered layouts  
-- 📝 **Text Wrapping** – long content automatically wraps to multiple lines (no data loss!)  
-- 🌈 **Smart Color Fallback** – automatically fixes white-on-white text in PowerPoint  
-- 📄 **Global Headers & Footers** – custom text with automatic "Page X of Y" numbering
+- 🚀 **Fast conversion** using native Go binary
+- 💾 **Low memory footprint** – handles large files efficiently
+- ⚡ **Queue-ready** – dispatch conversions to background jobs
+- 🎨 **Professional Table Rendering** – grid lines, smart alignment, and centered layouts
+- 📝 **Text Wrapping** – long content automatically wraps to multiple lines
+- 📄 **Headers & Footers** – custom text with automatic page numbering
 
 ---
 
@@ -20,40 +18,30 @@
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Usage](#usage)
-  - [Facade API](#facade-api)
-  - [CSV Conversion](#csv-conversion)
-  - [Excel Conversion](#excel-conversion)
-  - [PowerPoint Conversion](#powerpoint-conversion)
-  - [Batch Processing](#batch-processing)
-  - [Queue Jobs](#queue-jobs)
-  - [Artisan Commands](#artisan-commands)
-- [Configuration](#configuration)
-- [Performance](#performance)
 - [Supported Formats](#supported-formats)
+- [Configuration](#configuration)
+- [Error Handling](#error-handling)
 - [Troubleshooting](#troubleshooting)
-- [Contributing](#contributing)
 - [License](#license)
 
 ---
 
 ## Features
 
-| Format | Input Extensions | Features |
-|--------|-----------------|----------|
-| **CSV** | `.csv`, `.tsv` | Auto-detect delimiter, streaming for large files, header styling |
-| **Excel** | `.xlsx`, `.xls`, `.xlsm` | Professional grid lines, smart alignment (numbers/text), centered tables |
-| **PowerPoint** | `.pptx`, `.ppt` | Slide extraction, Smart Color fallback for text visibility, optional LibreOffice |
+| Format | Input Extensions | Conversion Method |
+|--------|-----------------|-------------------|
+| **CSV** | `.csv`, `.tsv` | Native Go (no dependencies) |
+| **Excel** | `.xlsx`, `.xlsm` | Native Go (no dependencies) |
+| **Excel Legacy** | `.xls` | LibreOffice → XLSX → Native Go |
+| **PowerPoint** | `.pptx`, `.ppt` | LibreOffice (full fidelity) |
 
-### Why Go?
+### Key Features
 
-- **Memory Efficient**: Processes files in streams, doesn't load entire file into memory
-- **Concurrent**: Batch processing uses goroutines for parallel conversion
-- **Fast**: Native binary execution, no interpreter overhead
-- **Cross-platform**: Pre-built binaries for Linux, macOS, and Windows included in the repo
-
-### 🚫 No Go Installed? No Problem!
-**You do NOT need to install Go on your server.** 
-This package ships with compiled binaries for all major OSs (Linux, macOS, Windows). The package automatically detects your OS and executes the correct binary. You just install the PHP package, and it works.
+- **Native Go Binary**: Pre-compiled binaries for Linux, macOS, and Windows included
+- **No Go Installation Required**: Just install the PHP package and it works
+- **LibreOffice Integration**: For PowerPoint and legacy Excel files with full visual fidelity
+- **Queue Support**: Built-in Laravel queue jobs with retry logic
+- **Batch Processing**: Convert multiple files in parallel
 
 ---
 
@@ -61,34 +49,11 @@ This package ships with compiled binaries for all major OSs (Linux, macOS, Windo
 
 - PHP 8.1+
 - Laravel 10.x, 11.x, or 12.x
-- **No Go installation required** – pre-compiled binaries are included
-- **No LibreOffice required** – optional, only for full PowerPoint fidelity
+- **LibreOffice** (required for PPT, PPTX, and XLS files)
 
----
+### LibreOffice Installation
 
-## Installation
-
-Just one command – that's it! 🚀
-
-```bash
-composer require nikunjkothiya/laravel-go-pdf-converter
-```
-
-**Done!** The package is ready to use. All dependencies are bundled:
-- ✅ Pre-compiled Go binaries for Linux, macOS, and Windows (amd64/arm64)
-- ✅ Auto-detects your operating system and architecture
-- ✅ Automatically configures executable permissions
-- ✅ No additional setup required on local or production servers
-
-### Optional: Publish Configuration
-
-```bash
-php artisan vendor:publish --tag=gopdf-config
-```
-
-### Optional: LibreOffice for Full PowerPoint Fidelity
-
-For best PowerPoint conversion quality (with backgrounds and images), you can optionally install LibreOffice:
+LibreOffice is **required** for PowerPoint and legacy Excel conversions:
 
 ```bash
 # Ubuntu/Debian
@@ -96,9 +61,24 @@ sudo apt-get install libreoffice
 
 # macOS
 brew install --cask libreoffice
+
+# Windows
+# Download from https://www.libreoffice.org/download/download/
 ```
 
-> **Note**: LibreOffice is **completely optional**. Without it, PowerPoint files are still converted using native Go extraction with Smart Color fallback for text visibility.
+---
+
+## Installation
+
+```bash
+composer require nikunjkothiya/laravel-go-pdf-converter
+```
+
+### Publish Configuration (Optional)
+
+```bash
+php artisan vendor:publish --tag=gopdf-config
+```
 
 ---
 
@@ -113,7 +93,7 @@ PdfConverter::csv('data.csv')->toPdf('output.pdf')->convert();
 // Convert Excel to PDF
 PdfConverter::excel('report.xlsx')->toPdf('report.pdf')->convert();
 
-// Convert PowerPoint to PDF
+// Convert PowerPoint to PDF (requires LibreOffice)
 PdfConverter::pptx('presentation.pptx')->toPdf('slides.pdf')->convert();
 ```
 
@@ -122,8 +102,6 @@ PdfConverter::pptx('presentation.pptx')->toPdf('slides.pdf')->convert();
 ## Usage
 
 ### Facade API
-
-The `PdfConverter` facade provides a fluent, chainable API:
 
 ```php
 use NikunjKothiya\GoPdfConverter\Facades\PdfConverter;
@@ -142,37 +120,7 @@ $result = PdfConverter::from('input.csv')
 //     'process_time_ms' => 234,
 //     'file_size_bytes' => 45678,
 // ]
-
-// Global Headers & Footers
-PdfConverter::from('input.xlsx')
-    ->headerText('Confidential Report')
-    ->footerText('Property of Company')
-    ->convert();
-// Result:
-// - Header: 'Confidential Report' (Centered)
-// - Footer: 'Property of Company' (Left) | 'Page 1 of 5' (Right)
 ```
-
-### Smart Output Design
-This package now features a **Smart Layout Engine** that:
-1.  **Accurately Measures Text**: Uses the actual font metrics to calculate column widths, ensuring perfect fit.
-2.  **Auto-Orientation**: Automatically switches to Landscape mode if the data is too wide for Portrait.
-3.  **Intelligent Compression**: Compresses long text columns while preserving critical data columns.
-
-### Header & Footer Layout
-The package uses a professional standard layout for all documents:
-*   **Header**: Centered text (customizable).
-*   **Footer**: 
-    *   **Left**: Custom text (e.g. Copyright info, strict default if empty).
-    *   **Right**: Automatic Page Numbering (Page X of Y).
-
-```php
-PdfConverter::csv('data.csv')
-    ->headerText('Quarterly Report') // Appears in Center Top
-    ->footerText('Generated by System') // Appears in Left Bottom
-    ->convert();
-```
-> **Note**: `{{page}}` and `{{total}}` placeholders are supported in header/footer text if needed, but page numbering is automatically added to the right footer.
 
 ### CSV Conversion
 
@@ -180,316 +128,379 @@ PdfConverter::csv('data.csv')
 // Simple conversion
 PdfConverter::csv('data.csv')->toPdf('output.pdf')->convert();
 
-// Handling Wide CSVs (many columns)
-// This uses A3 landscape, smaller font, and tight margins for best fit
-PdfConverter::csv('wide_data.csv')
-    ->wideFormat()
-    ->convert();
-
-// Custom Page Sizes
-PdfConverter::csv('data.csv')
-    ->tabloid()               // 11x17 inches (Great for huge tables)
-    ->a3()                    // 297x420 mm
-    ->landscape()
-    ->convert();
-
 // With options
 PdfConverter::csv('data.csv')
     ->toPdf('output.pdf')
-    ->pageSize('Letter')      // A4, Letter, Legal, A3, Tabloid
+    ->pageSize('A4')          // A4, Letter, Legal, A3, Tabloid
     ->landscape()             // Or: ->portrait()
     ->withHeaders()           // Style first row as header
     ->fontSize(11)            // Base font size
     ->margin(25)              // Page margin in points
     ->convert();
-```
 
-### Path & Storage Handling
-
-The package integrates seamlessly with Laravel's path and storage systems:
-
-```php
-// 1. Relative to Project Root (Default)
-PdfConverter::csv('storage/app/data.csv')->convert();
-
-// 2. Using Laravel Storage Disks
-PdfConverter::csv('reports/data.csv')
-    ->disk('s3')              // Uses S3 disk for both input and output
-    ->toPdf('exports/data.pdf')
+// Wide format for many columns
+PdfConverter::csv('wide_data.csv')
+    ->wideFormat()            // A3 landscape with smaller font
     ->convert();
-
-// 3. Absolute Paths
-PdfConverter::csv('/var/www/html/storage/app/data.csv')->convert();
 ```
-
-> [!TIP]
-> When using `->disk('name')`, the package will automatically resolve the full local path using `Storage::disk('name')->path($path)`. This is perfect for local, public, or mounted disks.
 
 ### Excel Conversion
 
 ```php
-// Convert all sheets
+// XLSX files - native conversion
 PdfConverter::excel('workbook.xlsx')
     ->toPdf('output.pdf')
     ->convert();
 
-// With professional styling
-PdfConverter::xlsx('report.xlsx')
-    ->toPdf('report.pdf')
-    ->a4()
-    ->portrait()
-    ->withHeaders()
+// XLS files - converts to XLSX first via LibreOffice
+PdfConverter::excel('legacy.xls')
+    ->toPdf('output.pdf')
     ->convert();
 
-// The native Excel renderer provides:
-// - Visible grid lines (borders)
-// - Smart alignment (numbers right-aligned, text left-aligned)
-// - Automatic table centering for balanced margins
-// - Automatic bridge for legacy .xls files (via LibreOffice)
+// With styling options
+PdfConverter::xlsx('report.xlsx')
+    ->toPdf('report.pdf')
+    ->landscape()
+    ->withHeaders()
+    ->headerText('Confidential Report')
+    ->footerText('© 2025 Company')
+    ->convert();
 ```
 
 ### PowerPoint Conversion
 
+PowerPoint files require LibreOffice for full visual fidelity (backgrounds, images, layouts).
+
 ```php
-// Basic conversion
+// PPTX conversion (requires LibreOffice)
 PdfConverter::pptx('presentation.pptx')
     ->toPdf('slides.pdf')
     ->convert();
 
-// The converter will:
-// 1. Try native Go extraction with Smart Color (fixes invisible text)
-// 2. Fall back to LibreOffice if installed (for full fidelity)
+// PPT legacy format (requires LibreOffice)
+PdfConverter::pptx('old_presentation.ppt')
+    ->toPdf('slides.pdf')
+    ->convert();
 
-// Force native conversion (useful if backgrounds don't render correctly)
+// Force native mode (text extraction only, no backgrounds/images)
 PdfConverter::pptx('presentation.pptx')
     ->native()
     ->convert();
 ```
 
-### Advanced Styling & Features
-
-Customize the look and feel of your PDFs with advanced options:
+### Headers & Footers
 
 ```php
 PdfConverter::csv('data.csv')
-    ->toPdf('report.pdf')
-    // Custom Fonts
-    ->font(resource_path('fonts/Roboto-Regular.ttf'))
-    
-    // Watermarks
-    ->watermarkText('CONFIDENTIAL', 0.1) // Text, Opacity (0.0 - 1.0)
-    ->watermarkImage(public_path('logo.png'), 0.2) // Image, Opacity
-    
-    // Table Styling
-    ->headerColor('4A90E2')   // Custom header background (Hex)
-    ->rowColor('F5F5F5')      // Alternating row color
-    ->borderColor('333333')   // Border color
-    ->showGridLines(false)    // Toggle grid lines
+    ->headerText('Quarterly Report')  // Centered at top
+    ->footerText('Generated by System') // Left side of footer
+    ->convert();
+// Page numbers (Page X of Y) are automatically added to the right footer
+```
+
+### Page Size Options
+
+```php
+PdfConverter::csv('data.csv')
+    ->a4()        // 210 × 297 mm (default)
+    ->a3()        // 297 × 420 mm
+    ->letter()    // 8.5 × 11 inches
+    ->legal()     // 8.5 × 14 inches
+    ->tabloid()   // 11 × 17 inches
     ->convert();
 ```
 
-### Batch Processing
+### Storage Disk Integration
 
-Convert multiple files at once with parallel processing:
+The `disk()` method allows using Laravel Storage disks to resolve file paths:
 
 ```php
-// Batch convert files
+// Using local Laravel Storage Disk
+PdfConverter::csv('reports/data.csv')
+    ->disk('local')
+    ->toPdf('exports/data.pdf')
+    ->convert();
+
+// Using public disk
+PdfConverter::csv('reports/data.csv')
+    ->disk('public')
+    ->toPdf('exports/data.pdf')
+    ->convert();
+```
+
+### Cloud Storage (S3, GCS, Azure, etc.)
+
+The package fully supports cloud storage. When using a cloud disk, files are automatically:
+1. Downloaded from cloud to a local temp directory
+2. Converted to PDF locally using the Go binary
+3. Uploaded back to cloud storage
+4. Temp files are cleaned up automatically
+
+```php
+// Amazon S3
+PdfConverter::csv('reports/data.csv')
+    ->disk('s3')
+    ->toPdf('exports/data.pdf')
+    ->convert();
+
+// Google Cloud Storage
+PdfConverter::excel('reports/sales.xlsx')
+    ->disk('gcs')
+    ->toPdf('exports/sales.pdf')
+    ->convert();
+
+// Azure Blob Storage
+PdfConverter::pptx('presentations/deck.pptx')
+    ->disk('azure')
+    ->toPdf('exports/deck.pdf')
+    ->convert();
+```
+
+**Supported Cloud Providers:**
+- Amazon S3 (`s3`)
+- Google Cloud Storage (`gcs`)
+- Azure Blob Storage (`azure`)
+- DigitalOcean Spaces (uses S3 driver)
+- MinIO (uses S3 driver)
+- FTP/SFTP (`ftp`, `sftp`)
+- Dropbox (`dropbox`)
+
+**Cloud Storage Configuration Example (config/filesystems.php):**
+
+```php
+'disks' => [
+    's3' => [
+        'driver' => 's3',
+        'key' => env('AWS_ACCESS_KEY_ID'),
+        'secret' => env('AWS_SECRET_ACCESS_KEY'),
+        'region' => env('AWS_DEFAULT_REGION'),
+        'bucket' => env('AWS_BUCKET'),
+    ],
+    
+    'gcs' => [
+        'driver' => 'gcs',
+        'project_id' => env('GOOGLE_CLOUD_PROJECT_ID'),
+        'key_file' => env('GOOGLE_CLOUD_KEY_FILE'),
+        'bucket' => env('GOOGLE_CLOUD_STORAGE_BUCKET'),
+    ],
+],
+```
+
+**Batch Processing with Cloud Storage:**
+
+```php
+$result = PdfConverter::batch([
+    'reports/q1.csv',
+    'reports/q2.xlsx',
+    'reports/q3.csv',
+])
+->disk('s3')
+->outputDir('exports/pdfs')
+->workers(4)
+->convert();
+
+// Result includes cloud paths
+// $result['cloud_output_dir'] => 'exports/pdfs'
+// $result['results'][0]['cloud_output_path'] => 'exports/pdfs/q1.pdf'
+```
+
+**Queue Jobs with Cloud Storage:**
+
+```php
+// Single file to queue with S3
+PdfConverter::csv('reports/data.csv')
+    ->disk('s3')
+    ->toPdf('exports/data.pdf')
+    ->queue();
+
+// Batch to queue with cloud storage
+PdfConverter::batch($files)
+    ->disk('s3')
+    ->outputDir('exports')
+    ->queue();
+```
+
+**Important Notes:**
+- Cloud operations require the appropriate Flysystem adapter package installed
+- For S3: `composer require league/flysystem-aws-s3-v3`
+- For GCS: `composer require league/flysystem-google-cloud-storage`
+- Temp files are stored in `config('gopdf.temp_dir')` and cleaned up after conversion
+- Large files may take longer due to download/upload time
+
+### Batch Processing
+
+Convert multiple files in parallel using Go's goroutines:
+
+```php
 $result = PdfConverter::batch([
     'file1.csv',
     'file2.xlsx',
-    'file3.pptx',
 ])
 ->outputDir('/path/to/output')
-->workers(4)              // Parallel workers (default: CPU cores)
-->landscape()             // Apply to all files
-->headerText('Batch Report')
-->footerText('Confidential')
+->workers(4)    // Number of parallel workers (default: CPU cores, max: 16)
 ->convert();
+```
 
-// Returns summary
-// [
-//     'total_jobs' => 3,
-//     'successful' => 3,
-//     'failed' => 0,
-//     'total_time_ns' => 1234567890,
-//     'results' => [...],
-// ]
+**Verified Return Format:**
+```php
+[
+    'total_jobs' => 2,
+    'successful' => 2,
+    'failed' => 0,
+    'total_time_ns' => 36747200,
+    'results' => [
+        [
+            'job' => ['ID' => 'job-1', 'InputPath' => '...', 'OutputPath' => '...'],
+            'success' => true,
+            'process_time_ns' => 33474500,
+        ],
+        // ...
+    ]
+]
 ```
 
 ### Queue Jobs
 
-Dispatch conversions to Laravel queues for background processing:
+Dispatch conversions to Laravel queues:
 
 ```php
-// Dispatch to queue
+// Dispatch single file to queue
 PdfConverter::csv('data.csv')
     ->toPdf('output.pdf')
     ->queue();
 
-// Specify connection and queue name
+// With specific connection and queue
 PdfConverter::csv('data.csv')
     ->toPdf('output.pdf')
     ->queue('redis', 'pdf-conversions');
 
-// Batch queue
+// Batch to queue
 PdfConverter::batch($files)
     ->outputDir($outputDir)
     ->queue();
 ```
 
-The jobs include:
-- Automatic retry (3 attempts by default)
-- Exponential backoff
-- Horizon tags for monitoring
-- Proper logging
+**Queue Job Configuration (from config):**
+- `tries`: 3 (retry attempts)
+- `backoff`: 30 seconds between retries
+- `timeout`: 120 seconds (single), 600 seconds (batch)
+- Default queue name: `pdf-conversions`
 
-### Artisan Commands
+**Note:** Queue functionality requires a properly configured Laravel queue driver (database, redis, etc.)
 
-#### Single File Conversion
+### Artisan Command
 
 ```bash
 # Basic conversion
 php artisan pdf:convert input.csv output.pdf
 
-# With options (works for CSV, TSV, XLSX, XLSM, PPTX)
+# With options
 php artisan pdf:convert input.xlsx output.pdf \
     --page-size=Letter \
     --landscape \
-    --margin=25 \
-    --font-size=11 \
-    --native \
-    --header-text="My Report" \
-    --footer-text="Copyright 2025"
+    --header-text="My Report"
+
 # Async via queue
 php artisan pdf:convert input.csv output.pdf --queue
 ```
 
 ---
 
+## Supported Formats
+
+| Format | Extension | Method | Requirements |
+|--------|-----------|--------|--------------|
+| CSV | `.csv` | Native Go | None |
+| TSV | `.tsv` | Native Go | None |
+| Excel | `.xlsx`, `.xlsm` | Native Go | None |
+| Excel Legacy | `.xls` | LibreOffice → Native | LibreOffice |
+| PowerPoint | `.pptx` | LibreOffice | LibreOffice |
+| PowerPoint Legacy | `.ppt` | LibreOffice | LibreOffice |
+
+### Conversion Details
+
+- **CSV/TSV**: Parsed natively with auto-delimiter detection, rendered as professional tables
+- **XLSX/XLSM**: Parsed natively using excelize library, supports multiple sheets
+- **XLS**: Converted to XLSX via LibreOffice, then processed natively for table rendering
+- **PPTX/PPT**: Converted via LibreOffice for full visual fidelity (backgrounds, images, layouts)
+
+---
+
 ## Configuration
 
-Configuration is **optional**. The package works with sensible defaults out of the box.
-
-To customize settings, publish the config file:
+Publish the config file:
 
 ```bash
 php artisan vendor:publish --tag=gopdf-config
 ```
 
-Then edit `config/gopdf.php`:
-
 ```php
-return [
-    // Binary path is auto-detected - no need to set this
-    // 'binary_path' => env('GOPDF_BINARY_PATH', null),
+// config/gopdf.php
 
-    // LibreOffice path (optional, for full PowerPoint fidelity)
-    // 'libreoffice_path' => env('GOPDF_LIBREOFFICE_PATH', null),
+return [
+    // Go binary path (auto-detected based on OS/architecture)
+    'binary_path' => env('GOPDF_BINARY_PATH', null),
+
+    // LibreOffice path (auto-detected if not set)
+    'libreoffice_path' => env('GOPDF_LIBREOFFICE_PATH', null),
+
+    // Temporary directory for conversions
+    'temp_dir' => env('GOPDF_TEMP_DIR', storage_path('app/temp/gopdf')),
 
     // Default page settings
     'defaults' => [
-        'page_size' => 'A4',
-        'orientation' => 'portrait',
-        'margin' => 20,
-        'font_size' => 10,
-        'header_row' => true,
+        'page_size' => 'A4',        // A4, Letter, Legal, A3, Tabloid
+        'orientation' => 'portrait', // portrait, landscape
+        'margin' => 20,              // points
+        'font_size' => 10,           // points
+        'header_row' => true,        // Style first row as header
     ],
 
     // Timeout settings (seconds)
     'timeout' => [
-        'single' => 300,
-        'batch' => 600,
+        'single' => 120,    // Single file conversion
+        'batch' => 600,     // Batch conversion
     ],
 
-    // Queue settings (for background processing)
+    // Queue settings
     'queue' => [
-        'connection' => null,  // Use default
-        'queue' => 'pdf-conversions',
-        'tries' => 3,
-        'backoff' => 30,
+        'connection' => env('GOPDF_QUEUE_CONNECTION', null),
+        'queue' => env('GOPDF_QUEUE_NAME', 'pdf-conversions'),
+        'tries' => 3,       // Retry attempts
+        'backoff' => 30,    // Seconds between retries
+    ],
+
+    // Batch processing
+    'batch' => [
+        'workers' => env('GOPDF_BATCH_WORKERS', 0), // 0 = auto (CPU cores)
+    ],
+
+    // Logging
+    'logging' => [
+        'enabled' => env('GOPDF_LOGGING', true),
+        'channel' => env('GOPDF_LOG_CHANNEL', null),
     ],
 ];
 ```
 
-### Environment Variables (Optional)
-
-All environment variables are **optional**. The package works out of the box without any configuration.
+### Environment Variables
 
 ```env
-# Queue configuration (if using background processing)
+# Binary paths (usually auto-detected)
+GOPDF_BINARY_PATH=
+GOPDF_LIBREOFFICE_PATH=/usr/bin/libreoffice
+
+# Queue configuration
 GOPDF_QUEUE_CONNECTION=redis
 GOPDF_QUEUE_NAME=pdf-conversions
 
-# Batch processing workers (default: auto-detect CPU cores)
+# Batch processing
 GOPDF_BATCH_WORKERS=4
 
-# Logging (default: enabled)
+# Logging
 GOPDF_LOGGING=true
 GOPDF_LOG_CHANNEL=stack
-
-# LibreOffice path (only needed for full PowerPoint fidelity)
-# GOPDF_LIBREOFFICE_PATH=/usr/bin/libreoffice
 ```
-
----
-
-## Performance
-### Benchmarks
-
-Tested on standard hardware (2-core CPU, 8GB RAM) using samples files:
-
-| File Type | File Size | This Package | Notes |
-|-----------|-----------|--------------|-------|
-| **CSV** | 14 MB | ~21s | Large data set conversion |
-| **PPTX** | 15 MB | ~5s | Native Go conversion |
-| **PPT** | 2 MB | ~1.6s | Legacy PowerPoint |
-| **Excel** | 0.5 MB | ~1.2s | Native XLSX conversion |
-| **Excel** | 14 MB | ~102s | Large file with row limit |
-| **CSV** | 1 KB | ~10ms | Small file overhead |
-
-### Large File Handling
-
-> **Note**: For files with more than 10,000 rows, only the first 10,000 rows are converted to prevent memory issues and timeouts. A notice is added to the PDF indicating the file was truncated.
-
-If you need to convert files with more rows, consider:
-- Splitting the file into smaller chunks
-- Increasing the timeout: `->timeout(600)`
-
-### Memory Usage
-
-| Operation | This Package | Pure PHP |
-|-----------|--------------|----------|
-| 10 MB CSV | ~50 MB | ~500 MB |
-| 100 MB CSV | ~80 MB | Memory exhausted |
-
----
-
-## Supported Formats
-
-| Format | Read | Notes |
-|--------|------|-------|
-| CSV | ✅ | Auto-detect delimiter (comma, tab, semicolon, pipe) |
-| TSV | ✅ | Tab-separated values |
-| XLSX | ✅ | Excel 2007+ format |
-| XLS | ✅ | Legacy Excel format |
-| XLSM | ✅ | Excel with macros |
-| PPTX | ✅ | PowerPoint 2007+ format (native Go, or LibreOffice for full fidelity) |
-| PPT | ✅ | Legacy PowerPoint (text extraction native, full fidelity with LibreOffice) |
-| ODP | ⚠️ | Requires LibreOffice |
-
-### Text Wrapping
-
-Long content in cells automatically wraps to multiple lines to prevent data loss.
-
-- **Automatic Wrapping**: Text is split into up to 3 lines per cell.
-- **Smart Breaking**: Long words are broken at character level if needed.
-- **Dynamic Row Height**: Rows automatically expand to fit wrapped text.
-
-> **Note**: If content exceeds 3 lines, it will be truncated with `...` to maintain table readability.
-
-> **Note**: For PPT/PPTX files, the package will:
-> 1. **With LibreOffice**: Full visual fidelity conversion (layouts, backgrounds, images)
-> 2. **Without LibreOffice (Native)**: Text extraction with **Smart Color** (automatically converts white text to black for visibility). Use the `--native` flag to force this mode.
 
 ---
 
@@ -504,16 +515,12 @@ use NikunjKothiya\GoPdfConverter\Exceptions\UnsupportedFormatException;
 try {
     PdfConverter::csv('data.csv')->toPdf('output.pdf')->convert();
 } catch (FileNotFoundException $e) {
-    // Input file doesn't exist
     echo "File not found: " . $e->getInputFile();
 } catch (UnsupportedFormatException $e) {
-    // Unsupported file type
     echo "Format not supported: " . $e->getMessage();
 } catch (PdfConversionException $e) {
-    // General conversion error
     echo "Error: " . $e->getMessage();
     echo "Code: " . $e->getErrorCode();
-    echo "Details: " . $e->getDetails();
 }
 ```
 
@@ -521,123 +528,120 @@ try {
 
 ## Troubleshooting
 
-### Binary Not Found
+### LibreOffice Not Found
 
-The package includes pre-built binaries and auto-configures them. If you encounter issues:
+For PPT, PPTX, and XLS files, LibreOffice must be installed:
 
 ```bash
-# Specify a custom binary path in .env
-GOPDF_BINARY_PATH=/path/to/gopdfconv
+# Check if LibreOffice is installed
+libreoffice --version
+
+# Set path in .env if not auto-detected
+GOPDF_LIBREOFFICE_PATH=/usr/bin/libreoffice
 ```
 
-### Permission Denied
-
-The package automatically sets executable permissions. If needed manually:
+### Permission Denied on Binary
 
 ```bash
 chmod +x vendor/nikunjkothiya/laravel-go-pdf-converter/bin/gopdfconv-*
 ```
 
-### PPTX Low Quality
-
-For best PowerPoint fidelity, install LibreOffice:
-
-```bash
-# Ubuntu/Debian
-sudo apt-get install libreoffice
-
-# macOS
-brew install libreoffice
-
-# Then set in .env
-GOPDF_LIBREOFFICE_PATH=/usr/bin/libreoffice
-```
-
 ### Large File Timeout
 
 ```php
-// Increase timeout for large files
 PdfConverter::csv('huge.csv')
     ->timeout(600)  // 10 minutes
     ->convert();
 ```
 
----
+### PowerPoint Shows Only Text (No Images/Backgrounds)
 
-## Building from Source
+This happens when LibreOffice is not available. Install LibreOffice for full fidelity conversion.
 
-If pre-built binaries don't work for your platform:
-
-```bash
-# Navigate to go-binary directory
-cd vendor/nikunjkothiya/laravel-go-pdf-converter/go-binary
-
-# Install dependencies
-go mod download
-
-# Build for current platform
-make build
-
-# Or build for all platforms
-make build-all
+If you intentionally want text-only extraction:
+```php
+PdfConverter::pptx('presentation.pptx')
+    ->native()  // Force native mode (text only)
+    ->convert();
 ```
 
 ---
 
-## Contributing
+## Performance & Limitations
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+### Large File Handling
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+The package processes **all rows** without artificial limits. It uses memory-efficient techniques:
+
+- **Buffered Reading**: Files are read with 64KB buffers for efficient I/O
+- **Streaming Support**: CSV files can be processed in streaming mode for very large files
+- **Column Width Sampling**: Only first 100 rows are sampled for column width calculation (full data is still rendered)
+
+**Timeout Configuration:**
+```php
+// Increase timeout for very large files
+PdfConverter::csv('large_file.csv')
+    ->timeout(600)  // 10 minutes
+    ->convert();
+```
+
+### Performance Notes
+
+- **CSV/TSV**: Native Go parsing with buffered I/O, handles large files efficiently
+- **XLSX/XLSM**: Native Go parsing using excelize library, processes all sheets and rows
+- **XLS**: Requires LibreOffice to convert to XLSX first, then native processing
+- **PPTX/PPT**: Requires LibreOffice for full visual fidelity
+
+**Factors affecting performance:**
+- File size and number of rows/columns
+- Number of sheets (Excel)
+- Complexity of content (PowerPoint)
+- System resources (CPU, memory, disk speed)
+- LibreOffice startup time (for formats requiring it)
+
+---
+
+## Building from Source
+
+If you need to rebuild the Go binary:
+
+```bash
+cd vendor/nikunjkothiya/laravel-go-pdf-converter/go-binary
+go mod download
+go build -o ../bin/gopdfconv-linux-amd64 ./cmd/gopdfconv      # Linux
+go build -o ../bin/gopdfconv-darwin-amd64 ./cmd/gopdfconv     # macOS
+go build -o ../bin/gopdfconv-windows-amd64.exe ./cmd/gopdfconv # Windows
+```
 
 ---
 
 ## License
 
-### Third-Party Dependencies
+This package is open-source software licensed under the **MIT license**.
 
-This package uses the following open-source libraries, all with permissive licenses:
+### Third-Party Dependencies
 
 | Library | License | Purpose |
 |---------|---------|---------|
 | [signintech/gopdf](https://github.com/signintech/gopdf) | MIT | PDF generation |
 | [xuri/excelize](https://github.com/xuri/excelize) | BSD 3-Clause | Excel parsing |
-| [richardlehane/mscfb](https://github.com/richardlehane/mscfb) | Apache 2.0 | Legacy PPT parsing |
-| [phpdave11/gofpdi](https://github.com/phpdave11/gofpdi) | MIT | PDF import |
-| golang.org/x/* | BSD 3-Clause | Go standard extensions |
-
-**All licenses allow**: ✅ Commercial use, ✅ Modification, ✅ Distribution
+| [richardlehane/mscfb](https://github.com/richardlehane/mscfb) | Apache 2.0 | Legacy file parsing |
 
 ---
-
 ## Support
-
-- ⭐ Star the repository on GitHub
-- 🐛 Report bugs via GitHub Issues
-- 💡 Suggest features via GitHub Discussions
-
-## 💖 Support the Project
-
+- :star: Star the repository on GitHub
+- :bug: Report bugs via GitHub Issues
+- :bulb: Suggest features via GitHub Discussions
+## :sparkling_heart: Support the Project
 If you find this project helpful and want to support its development, you can buy me a coffee!
-
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Support%20Me-orange.svg?style=flat-square&logo=buy-me-a-coffee)](https://buymeacoffee.com/nikunjkothiya)
-
 <img src="https://raw.githubusercontent.com/nikunjkothiya/assets/main/qr-code.png"
      alt="Buy Me A Coffee QR Code"
      width="180" />
-     
 ---
-
-## 📄 License
-
+## :page_facing_up: License
 This package is open-source software licensed under the **MIT license**.
-
 ---
-
 <p align="center">
-  Made with ❤️ by <a href="https://github.com/nikunjkothiya">Nikunj Kothiya</a>
+  Made with :heart: by <a href="https://github.com/nikunjkothiya">Nikunj Kothiya</a>
 </p>
