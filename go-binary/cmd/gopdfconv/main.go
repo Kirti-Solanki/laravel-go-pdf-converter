@@ -190,35 +190,34 @@ func runSingleConversion(inputPath, outputPath string, opts pdf.Options, formatF
 		err = csvConverter.Convert(inputPath, outputPath, opts)
 		
 	case converter.FormatXLSX, converter.FormatXLSM, converter.FormatXLS:
-		// For XLSX, try native first. For XLS, try LibreOffice first if available.
+		// For XLS (legacy format), convert to XLSX first using LibreOffice
 		if format == converter.FormatXLS {
 			pptxConverter := converter.NewPPTXConverter()
 			if libreOfficePath != "" {
 				pptxConverter.SetLibreOfficePath(libreOfficePath)
 			}
 			
-			// If we want native conversion for XLS, we must convert to XLSX first
-			if native && pptxConverter.HasLibreOffice() {
+			if pptxConverter.HasLibreOffice() {
+				// Convert XLS to XLSX first, then process with native Excel converter
 				loConverter := converter.NewLibreOfficeConverter(pptxConverter.GetLibreOfficePath())
 				tempXlsx := inputPath + ".xlsx"
-				if err := loConverter.ConvertTo(inputPath, tempXlsx, "xlsx"); err == nil {
+				if convErr := loConverter.ConvertTo(inputPath, tempXlsx, "xlsx"); convErr == nil {
 					defer os.Remove(tempXlsx)
 					excelConverter := converter.NewExcelConverter()
-			excelConverter.SetProgressCallback(progressCallback)
+					excelConverter.SetProgressCallback(progressCallback)
 					err = excelConverter.Convert(tempXlsx, outputPath, opts)
 				} else {
-					// Fallback to direct LO conversion if temp conversion fails
+					// If XLSX conversion fails, try direct PDF conversion
 					err = loConverter.Convert(inputPath, outputPath)
 				}
-			} else if pptxConverter.HasLibreOffice() && !native {
-				loConverter := converter.NewLibreOfficeConverter(pptxConverter.GetLibreOfficePath())
-				err = loConverter.Convert(inputPath, outputPath)
 			} else {
+				// No LibreOffice - try native converter (may have limited support)
 				excelConverter := converter.NewExcelConverter()
-			excelConverter.SetProgressCallback(progressCallback)
+				excelConverter.SetProgressCallback(progressCallback)
 				err = excelConverter.Convert(inputPath, outputPath, opts)
 			}
 		} else {
+			// XLSX/XLSM - use native Excel converter directly
 			excelConverter := converter.NewExcelConverter()
 			excelConverter.SetProgressCallback(progressCallback)
 			err = excelConverter.Convert(inputPath, outputPath, opts)
@@ -230,22 +229,45 @@ func runSingleConversion(inputPath, outputPath string, opts pdf.Options, formatF
 			pptxConverter.SetLibreOfficePath(libreOfficePath)
 		}
 		if native {
-			pptxConverter.SetUseLibreOffice(false)
+			pptxConverter.SetForceNative(true)
 		}
 		err = pptxConverter.Convert(inputPath, outputPath, opts)
 		
 	case converter.FormatPPT:
-		// Check if LibreOffice is available for better fidelity
+		// PPT (legacy format) handling
 		pptxConverter := converter.NewPPTXConverter()
 		if libreOfficePath != "" {
 			pptxConverter.SetLibreOfficePath(libreOfficePath)
 		}
+		
 		if pptxConverter.HasLibreOffice() && !native {
-			// Use LibreOffice for best results
+			// Try LibreOffice first for best results
 			loConverter := converter.NewLibreOfficeConverter(pptxConverter.GetLibreOfficePath())
 			err = loConverter.Convert(inputPath, outputPath)
+			if err != nil {
+				// If LibreOffice fails, try converting PPT to PPTX first, then to PDF
+				tempPptx := inputPath + ".pptx"
+				if convErr := loConverter.ConvertTo(inputPath, tempPptx, "pptx"); convErr == nil {
+					defer os.Remove(tempPptx)
+					pptxConverter.SetForceNative(true)
+					err = pptxConverter.Convert(tempPptx, outputPath, opts)
+				}
+			}
+		} else if pptxConverter.HasLibreOffice() && native {
+			// Native mode requested but we have LibreOffice - convert PPT to PPTX first
+			loConverter := converter.NewLibreOfficeConverter(pptxConverter.GetLibreOfficePath())
+			tempPptx := inputPath + ".pptx"
+			if convErr := loConverter.ConvertTo(inputPath, tempPptx, "pptx"); convErr == nil {
+				defer os.Remove(tempPptx)
+				pptxConverter.SetForceNative(true)
+				err = pptxConverter.Convert(tempPptx, outputPath, opts)
+			} else {
+				// Fall back to native PPT parser
+				pptConverter := converter.NewPPTConverter()
+				err = pptConverter.Convert(inputPath, outputPath, opts)
+			}
 		} else {
-			// Fall back to native PPT parser (text extraction only)
+			// No LibreOffice - use native PPT parser (text extraction only)
 			pptConverter := converter.NewPPTConverter()
 			err = pptConverter.Convert(inputPath, outputPath, opts)
 		}

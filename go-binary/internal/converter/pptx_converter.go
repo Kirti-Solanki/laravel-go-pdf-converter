@@ -4,9 +4,13 @@ import (
 	"archive/zip"
 	"encoding/xml"
 	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -18,9 +22,10 @@ import (
 
 // PPTXConverter handles PowerPoint (PPTX) to PDF conversion
 type PPTXConverter struct {
-	opts             pdf.Options
-	libreOfficePath  string
-	useLibreOffice   bool
+	opts            pdf.Options
+	libreOfficePath string
+	useLibreOffice  bool
+	forceNative     bool
 }
 
 // NewPPTXConverter creates a new PPTX converter
@@ -28,7 +33,6 @@ func NewPPTXConverter() *PPTXConverter {
 	c := &PPTXConverter{
 		opts: pdf.DefaultOptions(),
 	}
-	// Try to detect LibreOffice installation
 	c.detectLibreOffice()
 	return c
 }
@@ -38,9 +42,9 @@ func (c *PPTXConverter) SupportedExtensions() []string {
 	return []string{".pptx", ".ppt", ".odp"}
 }
 
+
 // detectLibreOffice checks for LibreOffice installation
 func (c *PPTXConverter) detectLibreOffice() {
-	// Common LibreOffice paths
 	paths := []string{
 		"/usr/bin/libreoffice",
 		"/usr/bin/soffice",
@@ -58,7 +62,6 @@ func (c *PPTXConverter) detectLibreOffice() {
 		}
 	}
 
-	// Try to find in PATH
 	if path, err := exec.LookPath("libreoffice"); err == nil {
 		c.libreOfficePath = path
 		c.useLibreOffice = true
@@ -79,21 +82,23 @@ func (c *PPTXConverter) SetLibreOfficePath(path string) {
 	}
 }
 
+// SetForceNative forces native conversion even if LibreOffice is available
+func (c *PPTXConverter) SetForceNative(force bool) {
+	c.forceNative = force
+}
+
 // Validate checks if the input file is a valid PPTX
 func (c *PPTXConverter) Validate(inputPath string) error {
-	// Check file exists
 	if _, err := os.Stat(inputPath); os.IsNotExist(err) {
 		return errors.NewWithFile(errors.ErrFileNotFound, "File not found", inputPath)
 	}
 
-	// Check if it's a valid ZIP (PPTX is a ZIP file)
 	r, err := zip.OpenReader(inputPath)
 	if err != nil {
 		return errors.NewWithDetails(errors.ErrInvalidFormat, "Not a valid PPTX file (invalid ZIP)", inputPath, err.Error())
 	}
 	defer r.Close()
 
-	// Check for required PPTX structure
 	hasContentTypes := false
 	hasPresentationXML := false
 
@@ -113,19 +118,23 @@ func (c *PPTXConverter) Validate(inputPath string) error {
 	return nil
 }
 
+
 // Convert performs the PPTX to PDF conversion
 func (c *PPTXConverter) Convert(inputPath, outputPath string, opts pdf.Options) error {
-	// Validate input
 	if err := c.Validate(inputPath); err != nil {
 		return err
 	}
 
-	// Use LibreOffice if available (best fidelity)
-	if c.useLibreOffice {
-		return c.convertWithLibreOffice(inputPath, outputPath)
+	// Use LibreOffice if available and not forced to native
+	if c.useLibreOffice && !c.forceNative {
+		err := c.convertWithLibreOffice(inputPath, outputPath)
+		if err == nil {
+			return nil
+		}
+		// Fall back to native if LibreOffice fails
 	}
 
-	// Fall back to native Go conversion (limited fidelity)
+	// Native Go conversion with improved rendering
 	return c.convertNative(inputPath, outputPath, opts)
 }
 
@@ -135,46 +144,44 @@ func (c *PPTXConverter) convertWithLibreOffice(inputPath, outputPath string) err
 	return loConverter.Convert(inputPath, outputPath)
 }
 
-// copyFile copies a file from src to dst
-func (c *PPTXConverter) copyFile(src, dst string) error {
-	sourceFile, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer sourceFile.Close()
-
-	destFile, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer destFile.Close()
-
-	_, err = io.Copy(destFile, sourceFile)
-	return err
-}
-
-// convertNative performs native Go conversion (limited fidelity)
+// convertNative performs native Go conversion with improved slide rendering
 func (c *PPTXConverter) convertNative(inputPath, outputPath string, opts pdf.Options) error {
-	// Open PPTX as ZIP
 	r, err := zip.OpenReader(inputPath)
 	if err != nil {
 		return errors.Wrap(err, errors.ErrConversionFailed, "Failed to open PPTX")
 	}
 	defer r.Close()
 
-	// Parse slides
-	slides, err := c.parseSlides(r)
+	// Create temp directory for extracted images
+	tempDir, err := os.MkdirTemp("", "pptx-images-*")
+	if err != nil {
+		return errors.Wrap(err, errors.ErrConversionFailed, "Failed to create temp directory")
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Extract images from PPTX
+	imageMap := c.extractImages(r, tempDir)
+
+	// Parse slide relationships to map images
+	relMap := c.parseRelationships(r)
+
+	// Parse slides with full content
+	slides, err := c.parseSlides(r, imageMap, relMap)
 	if err != nil {
 		return err
 	}
 
-	// Create PDF
+	// Get slide dimensions from presentation.xml
+	slideWidth, slideHeight := c.getSlideSize(r)
+
+	// Create PDF with landscape orientation for slides
+	opts.Orientation = pdf.Landscape
 	builder, err := pdf.NewBuilder(opts)
 	if err != nil {
 		return errors.Wrap(err, errors.ErrConversionFailed, "Failed to create PDF builder")
 	}
 
-	// Render each slide as a page
+	// Render each slide
 	for i, slide := range slides {
 		if i > 0 {
 			builder.AddPage()
@@ -182,11 +189,9 @@ func (c *PPTXConverter) convertNative(inputPath, outputPath string, opts pdf.Opt
 			builder.AddPage()
 		}
 
-		// Render slide content
-		c.renderSlide(builder, slide, opts)
+		c.renderSlideEnhanced(builder, slide, opts, slideWidth, slideHeight, tempDir)
 	}
 
-	// Save PDF
 	if err := builder.Save(outputPath); err != nil {
 		return errors.Wrap(err, errors.ErrWriteFailed, "Failed to save PDF")
 	}
@@ -194,44 +199,170 @@ func (c *PPTXConverter) convertNative(inputPath, outputPath string, opts pdf.Opt
 	return nil
 }
 
-// Slide represents a parsed PowerPoint slide
+
+// Slide represents a parsed PowerPoint slide with full content
 type Slide struct {
-	Index    int
-	Title    string
-	Texts    []SlideText
-	Images   []SlideImage
-	Notes    string
+	Index      int
+	Title      string
+	Texts      []SlideText
+	Images     []SlideImage
+	Background SlideBackground
+	Notes      string
 }
 
-// SlideText represents text on a slide
+// SlideText represents text on a slide with positioning
 type SlideText struct {
 	Content   string
-	X, Y      float64 // Position as percentage of slide
+	X, Y      float64 // Position in EMUs (English Metric Units)
 	Width     float64
+	Height    float64
 	FontSize  float64
 	Bold      bool
 	Italic    bool
 	Alignment string
 	Color     string // Hex color like "FFFFFF"
+	IsTitle   bool
 }
 
 // SlideImage represents an image on a slide
 type SlideImage struct {
-	RelID   string
-	X, Y    float64
-	Width   float64
-	Height  float64
+	RelID    string
+	FilePath string
+	X, Y     float64
+	Width    float64
+	Height   float64
 }
 
-// parseSlides extracts slide information from PPTX
-func (c *PPTXConverter) parseSlides(r *zip.ReadCloser) ([]Slide, error) {
+// SlideBackground represents slide background
+type SlideBackground struct {
+	Color     string // Hex color
+	ImagePath string
+	HasColor  bool
+	HasImage  bool
+}
+
+// extractImages extracts all images from PPTX to temp directory
+func (c *PPTXConverter) extractImages(r *zip.ReadCloser, tempDir string) map[string]string {
+	imageMap := make(map[string]string)
+
+	for _, f := range r.File {
+		if strings.HasPrefix(f.Name, "ppt/media/") {
+			ext := strings.ToLower(filepath.Ext(f.Name))
+			if ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".gif" || ext == ".bmp" {
+				rc, err := f.Open()
+				if err != nil {
+					continue
+				}
+
+				baseName := filepath.Base(f.Name)
+				outPath := filepath.Join(tempDir, baseName)
+				outFile, err := os.Create(outPath)
+				if err != nil {
+					rc.Close()
+					continue
+				}
+
+				io.Copy(outFile, rc)
+				outFile.Close()
+				rc.Close()
+
+				imageMap[baseName] = outPath
+			}
+		}
+	}
+
+	return imageMap
+}
+
+// parseRelationships parses slide relationships to map rId to image files
+func (c *PPTXConverter) parseRelationships(r *zip.ReadCloser) map[string]map[string]string {
+	relMap := make(map[string]map[string]string)
+
+	for _, f := range r.File {
+		if strings.Contains(f.Name, "_rels/slide") && strings.HasSuffix(f.Name, ".rels") {
+			rc, err := f.Open()
+			if err != nil {
+				continue
+			}
+			data, _ := io.ReadAll(rc)
+			rc.Close()
+
+			// Extract slide number from path
+			slideNum := ""
+			re := regexp.MustCompile(`slide(\d+)\.xml\.rels`)
+			if matches := re.FindStringSubmatch(f.Name); len(matches) > 1 {
+				slideNum = matches[1]
+			}
+
+			if slideNum == "" {
+				continue
+			}
+
+			relMap[slideNum] = make(map[string]string)
+
+			// Parse relationships XML
+			type Relationship struct {
+				Id     string `xml:"Id,attr"`
+				Target string `xml:"Target,attr"`
+			}
+			type Relationships struct {
+				Rels []Relationship `xml:"Relationship"`
+			}
+
+			var rels Relationships
+			xml.Unmarshal(data, &rels)
+
+			for _, rel := range rels.Rels {
+				if strings.Contains(rel.Target, "media/") {
+					relMap[slideNum][rel.Id] = filepath.Base(rel.Target)
+				}
+			}
+		}
+	}
+
+	return relMap
+}
+
+
+// getSlideSize extracts slide dimensions from presentation.xml
+func (c *PPTXConverter) getSlideSize(r *zip.ReadCloser) (float64, float64) {
+	// Default slide size (standard 16:9)
+	defaultWidth := 9144000.0  // EMUs
+	defaultHeight := 5143500.0 // EMUs
+
+	for _, f := range r.File {
+		if f.Name == "ppt/presentation.xml" {
+			rc, err := f.Open()
+			if err != nil {
+				return defaultWidth, defaultHeight
+			}
+			data, _ := io.ReadAll(rc)
+			rc.Close()
+
+			// Extract sldSz (slide size)
+			re := regexp.MustCompile(`<p:sldSz[^>]*cx="(\d+)"[^>]*cy="(\d+)"`)
+			if matches := re.FindSubmatch(data); len(matches) > 2 {
+				if w, err := strconv.ParseFloat(string(matches[1]), 64); err == nil {
+					defaultWidth = w
+				}
+				if h, err := strconv.ParseFloat(string(matches[2]), 64); err == nil {
+					defaultHeight = h
+				}
+			}
+			break
+		}
+	}
+
+	return defaultWidth, defaultHeight
+}
+
+// parseSlides extracts slide information from PPTX with full content
+func (c *PPTXConverter) parseSlides(r *zip.ReadCloser, imageMap map[string]string, relMap map[string]map[string]string) ([]Slide, error) {
 	var slides []Slide
 
-	// Find all slide XML files
 	slideFiles := make(map[int]*zip.File)
 	for _, f := range r.File {
-		if strings.HasPrefix(f.Name, "ppt/slides/slide") && strings.HasSuffix(f.Name, ".xml") {
-			// Extract slide number
+		if strings.HasPrefix(f.Name, "ppt/slides/slide") && strings.HasSuffix(f.Name, ".xml") && !strings.Contains(f.Name, "_rels") {
 			numStr := strings.TrimPrefix(f.Name, "ppt/slides/slide")
 			numStr = strings.TrimSuffix(numStr, ".xml")
 			if num, err := strconv.Atoi(numStr); err == nil {
@@ -240,19 +371,17 @@ func (c *PPTXConverter) parseSlides(r *zip.ReadCloser) ([]Slide, error) {
 		}
 	}
 
-	// Sort slides by number
 	var slideNums []int
 	for num := range slideFiles {
 		slideNums = append(slideNums, num)
 	}
 	sort.Ints(slideNums)
 
-	// Parse each slide
 	for _, num := range slideNums {
 		slideFile := slideFiles[num]
-		slide, err := c.parseSlideXML(slideFile)
+		slide, err := c.parseSlideXMLEnhanced(slideFile, imageMap, relMap[strconv.Itoa(num)])
 		if err != nil {
-			continue // Skip slides that fail to parse
+			continue
 		}
 		slide.Index = num
 		slides = append(slides, slide)
@@ -261,16 +390,27 @@ func (c *PPTXConverter) parseSlides(r *zip.ReadCloser) ([]Slide, error) {
 	return slides, nil
 }
 
-// PPTX XML structures for parsing
-type slideXML struct {
-	CSld struct {
+// PPTX XML structures for enhanced parsing
+type slideXMLEnhanced struct {
+	XMLName xml.Name `xml:"sld"`
+	CSld    struct {
+		Bg *struct {
+			BgPr *struct {
+				SolidFill *struct {
+					SrgbClr *struct {
+						Val string `xml:"val,attr"`
+					} `xml:"srgbClr"`
+				} `xml:"solidFill"`
+			} `xml:"bgPr"`
+		} `xml:"bg"`
 		SpTree struct {
-			Sp []shapeXML `xml:"sp"`
+			Sp  []shapeXMLEnhanced `xml:"sp"`
+			Pic []picXML           `xml:"pic"`
 		} `xml:"spTree"`
 	} `xml:"cSld"`
 }
 
-type shapeXML struct {
+type shapeXMLEnhanced struct {
 	NvSpPr struct {
 		NvPr struct {
 			Ph *struct {
@@ -278,17 +418,35 @@ type shapeXML struct {
 			} `xml:"ph"`
 		} `xml:"nvPr"`
 	} `xml:"nvSpPr"`
+	SpPr *struct {
+		Xfrm *struct {
+			Off *struct {
+				X string `xml:"x,attr"`
+				Y string `xml:"y,attr"`
+			} `xml:"off"`
+			Ext *struct {
+				Cx string `xml:"cx,attr"`
+				Cy string `xml:"cy,attr"`
+			} `xml:"ext"`
+		} `xml:"xfrm"`
+	} `xml:"spPr"`
 	TxBody *struct {
-		P []paragraphXML `xml:"p"`
+		P []paragraphXMLEnhanced `xml:"p"`
 	} `xml:"txBody"`
 }
 
-type paragraphXML struct {
-	R []runXML `xml:"r"`
+type paragraphXMLEnhanced struct {
+	PPr *struct {
+		Algn string `xml:"algn,attr"`
+	} `xml:"pPr"`
+	R []runXMLEnhanced `xml:"r"`
 }
 
-type runXML struct {
+type runXMLEnhanced struct {
 	RPr *struct {
+		Sz   string `xml:"sz,attr"`
+		B    string `xml:"b,attr"`
+		I    string `xml:"i,attr"`
 		SolidFill *struct {
 			SrgbClr *struct {
 				Val string `xml:"val,attr"`
@@ -301,8 +459,29 @@ type runXML struct {
 	T string `xml:"t"`
 }
 
-// parseSlideXML parses a single slide XML file
-func (c *PPTXConverter) parseSlideXML(f *zip.File) (Slide, error) {
+type picXML struct {
+	BlipFill *struct {
+		Blip *struct {
+			Embed string `xml:"embed,attr"`
+		} `xml:"blip"`
+	} `xml:"blipFill"`
+	SpPr *struct {
+		Xfrm *struct {
+			Off *struct {
+				X string `xml:"x,attr"`
+				Y string `xml:"y,attr"`
+			} `xml:"off"`
+			Ext *struct {
+				Cx string `xml:"cx,attr"`
+				Cy string `xml:"cy,attr"`
+			} `xml:"ext"`
+		} `xml:"xfrm"`
+	} `xml:"spPr"`
+}
+
+
+// parseSlideXMLEnhanced parses a single slide XML file with full content
+func (c *PPTXConverter) parseSlideXMLEnhanced(f *zip.File, imageMap map[string]string, slideRels map[string]string) (Slide, error) {
 	slide := Slide{}
 
 	rc, err := f.Open()
@@ -316,10 +495,18 @@ func (c *PPTXConverter) parseSlideXML(f *zip.File) (Slide, error) {
 		return slide, err
 	}
 
-	var sld slideXML
+	var sld slideXMLEnhanced
 	if err := xml.Unmarshal(data, &sld); err != nil {
-		// Try simpler text extraction
+		// Fall back to simple text extraction
 		return c.extractTextSimple(data), nil
+	}
+
+	// Extract background color
+	if sld.CSld.Bg != nil && sld.CSld.Bg.BgPr != nil && sld.CSld.Bg.BgPr.SolidFill != nil {
+		if sld.CSld.Bg.BgPr.SolidFill.SrgbClr != nil {
+			slide.Background.Color = sld.CSld.Bg.BgPr.SolidFill.SrgbClr.Val
+			slide.Background.HasColor = true
+		}
 	}
 
 	// Extract text from shapes
@@ -329,57 +516,156 @@ func (c *PPTXConverter) parseSlideXML(f *zip.File) (Slide, error) {
 		}
 
 		var textContent strings.Builder
+		var fontSize float64 = 12
+		var color string
+		var bold, italic bool
+		var alignment string
+
 		for _, p := range sp.TxBody.P {
+			if p.PPr != nil && p.PPr.Algn != "" {
+				alignment = p.PPr.Algn
+			}
 			for _, r := range p.R {
 				textContent.WriteString(r.T)
+				if r.RPr != nil {
+					if r.RPr.Sz != "" {
+						if sz, err := strconv.ParseFloat(r.RPr.Sz, 64); err == nil {
+							fontSize = sz / 100 // Convert from hundredths of a point
+						}
+					}
+					if r.RPr.B == "1" {
+						bold = true
+					}
+					if r.RPr.I == "1" {
+						italic = true
+					}
+					if r.RPr.SolidFill != nil {
+						if r.RPr.SolidFill.SrgbClr != nil {
+							color = r.RPr.SolidFill.SrgbClr.Val
+						} else if r.RPr.SolidFill.SchemeClr != nil {
+							color = c.mapSchemeColor(r.RPr.SolidFill.SchemeClr.Val)
+						}
+					}
+				}
 			}
 			textContent.WriteString("\n")
 		}
 
 		text := strings.TrimSpace(textContent.String())
-		if text != "" {
-			// Extract color from first run
-			color := ""
-			if len(sp.TxBody.P) > 0 && len(sp.TxBody.P[0].R) > 0 {
-				r := sp.TxBody.P[0].R[0]
-				if r.RPr != nil && r.RPr.SolidFill != nil {
-					if r.RPr.SolidFill.SrgbClr != nil {
-						color = r.RPr.SolidFill.SrgbClr.Val
-					} else if r.RPr.SolidFill.SchemeClr != nil {
-						// Map scheme colors (simplified)
-						if r.RPr.SolidFill.SchemeClr.Val == "bg1" {
-							color = "FFFFFF"
-						} else if r.RPr.SolidFill.SchemeClr.Val == "tx1" {
-							color = "000000"
-						}
-					}
-				}
+		if text == "" {
+			continue
+		}
+
+		// Get position
+		var x, y, w, h float64
+		if sp.SpPr != nil && sp.SpPr.Xfrm != nil {
+			if sp.SpPr.Xfrm.Off != nil {
+				x, _ = strconv.ParseFloat(sp.SpPr.Xfrm.Off.X, 64)
+				y, _ = strconv.ParseFloat(sp.SpPr.Xfrm.Off.Y, 64)
 			}
-
-			// Check if this is a title
-			isTitle := sp.NvSpPr.NvPr.Ph != nil && 
-				(sp.NvSpPr.NvPr.Ph.Type == "title" || sp.NvSpPr.NvPr.Ph.Type == "ctrTitle")
-
-			if isTitle && slide.Title == "" {
-				slide.Title = text
-			} else {
-				slide.Texts = append(slide.Texts, SlideText{
-					Content:  text,
-					FontSize: 12,
-					Color:    color,
-				})
+			if sp.SpPr.Xfrm.Ext != nil {
+				w, _ = strconv.ParseFloat(sp.SpPr.Xfrm.Ext.Cx, 64)
+				h, _ = strconv.ParseFloat(sp.SpPr.Xfrm.Ext.Cy, 64)
 			}
 		}
+
+		isTitle := sp.NvSpPr.NvPr.Ph != nil &&
+			(sp.NvSpPr.NvPr.Ph.Type == "title" || sp.NvSpPr.NvPr.Ph.Type == "ctrTitle")
+
+		if isTitle && slide.Title == "" {
+			slide.Title = text
+		}
+
+		slide.Texts = append(slide.Texts, SlideText{
+			Content:   text,
+			X:         x,
+			Y:         y,
+			Width:     w,
+			Height:    h,
+			FontSize:  fontSize,
+			Bold:      bold,
+			Italic:    italic,
+			Alignment: alignment,
+			Color:     color,
+			IsTitle:   isTitle,
+		})
+	}
+
+	// Extract images
+	for _, pic := range sld.CSld.SpTree.Pic {
+		if pic.BlipFill == nil || pic.BlipFill.Blip == nil {
+			continue
+		}
+
+		relId := pic.BlipFill.Blip.Embed
+		if relId == "" {
+			continue
+		}
+
+		// Look up image file from relationships
+		imageName := slideRels[relId]
+		if imageName == "" {
+			continue
+		}
+
+		imagePath := imageMap[imageName]
+		if imagePath == "" {
+			continue
+		}
+
+		var x, y, w, h float64
+		if pic.SpPr != nil && pic.SpPr.Xfrm != nil {
+			if pic.SpPr.Xfrm.Off != nil {
+				x, _ = strconv.ParseFloat(pic.SpPr.Xfrm.Off.X, 64)
+				y, _ = strconv.ParseFloat(pic.SpPr.Xfrm.Off.Y, 64)
+			}
+			if pic.SpPr.Xfrm.Ext != nil {
+				w, _ = strconv.ParseFloat(pic.SpPr.Xfrm.Ext.Cx, 64)
+				h, _ = strconv.ParseFloat(pic.SpPr.Xfrm.Ext.Cy, 64)
+			}
+		}
+
+		slide.Images = append(slide.Images, SlideImage{
+			RelID:    relId,
+			FilePath: imagePath,
+			X:        x,
+			Y:        y,
+			Width:    w,
+			Height:   h,
+		})
 	}
 
 	return slide, nil
+}
+
+// mapSchemeColor maps PowerPoint scheme colors to hex values
+func (c *PPTXConverter) mapSchemeColor(scheme string) string {
+	colorMap := map[string]string{
+		"bg1":     "FFFFFF",
+		"bg2":     "E7E6E6",
+		"tx1":     "000000",
+		"tx2":     "44546A",
+		"accent1": "4472C4",
+		"accent2": "ED7D31",
+		"accent3": "A5A5A5",
+		"accent4": "FFC000",
+		"accent5": "5B9BD5",
+		"accent6": "70AD47",
+		"lt1":     "FFFFFF",
+		"lt2":     "E7E6E6",
+		"dk1":     "000000",
+		"dk2":     "44546A",
+	}
+	if color, ok := colorMap[scheme]; ok {
+		return color
+	}
+	return "000000"
 }
 
 // extractTextSimple uses regex for simple text extraction as fallback
 func (c *PPTXConverter) extractTextSimple(data []byte) Slide {
 	slide := Slide{}
 
-	// Simple regex to extract text content
 	re := regexp.MustCompile(`<a:t>([^<]+)</a:t>`)
 	matches := re.FindAllSubmatch(data, -1)
 
@@ -406,50 +692,171 @@ func (c *PPTXConverter) extractTextSimple(data []byte) Slide {
 	return slide
 }
 
-// renderSlide renders a slide to PDF
-func (c *PPTXConverter) renderSlide(builder *pdf.Builder, slide Slide, opts pdf.Options) {
-	style := pdf.DefaultStyle()
-	titleStyle := pdf.HeaderStyle()
-	titleStyle.FontSize = 24
 
-	// Render title
-	if slide.Title != "" {
-		builder.AddText(slide.Title, titleStyle)
-		builder.NewLine(20)
+// renderSlideEnhanced renders a slide to PDF with images and better layout
+func (c *PPTXConverter) renderSlideEnhanced(builder *pdf.Builder, slide Slide, opts pdf.Options, slideW, slideH float64, tempDir string) {
+	// Calculate scale factor from EMUs to PDF points
+	// EMUs: 914400 per inch, PDF points: 72 per inch
+	pageWidth := opts.PageSize.Height  // Landscape
+	pageHeight := opts.PageSize.Width
+	if opts.Orientation == pdf.Portrait {
+		pageWidth = opts.PageSize.Width
+		pageHeight = opts.PageSize.Height
 	}
 
-	// Render other text elements
-	for _, text := range slide.Texts {
-		textStyle := style
-		if text.Bold {
-			textStyle.FontStyle = "B"
-		}
-		if text.FontSize > 0 {
-			textStyle.FontSize = text.FontSize
+	contentWidth := pageWidth - (opts.Margin * 2)
+	contentHeight := pageHeight - (opts.Margin * 2) - 40 // Leave room for header/footer
+
+	scaleX := contentWidth / slideW
+	scaleY := contentHeight / slideH
+	scale := scaleX
+	if scaleY < scaleX {
+		scale = scaleY
+	}
+
+	// EMU to points conversion (914400 EMUs = 1 inch = 72 points)
+	emuToPoints := func(emu float64) float64 {
+		return (emu / 914400.0) * 72.0 * (scale * 914400.0 / 72.0)
+	}
+
+	// Draw background color if present
+	if slide.Background.HasColor && slide.Background.Color != "" {
+		bgColor := pdf.ParseHexColor(slide.Background.Color)
+		builder.SetFillColor(bgColor)
+		pdfObj := builder.GetPdf()
+		pdfObj.Rectangle(opts.Margin, opts.Margin+20, pageWidth-opts.Margin, pageHeight-opts.Margin-10, "F", 0, 0)
+	}
+
+	// Draw images first (background layer)
+	for _, img := range slide.Images {
+		if img.FilePath == "" {
+			continue
 		}
 
-		// Handle color
-		if text.Color != "" {
-			textStyle.TextColor = pdf.ParseHexColor(text.Color)
-			
-			// SMART COLOR FALLBACK:
-			// If text is white (or very light) and we are rendering on white background,
-			// force it to black/dark gray so it's visible.
-			if textStyle.TextColor.R > 240 && textStyle.TextColor.G > 240 && textStyle.TextColor.B > 240 {
-				textStyle.TextColor = pdf.ColorBlack
+		// Check if image file exists and is valid
+		if _, err := os.Stat(img.FilePath); err != nil {
+			continue
+		}
+
+		// Calculate position and size
+		imgX := opts.Margin + emuToPoints(img.X)
+		imgY := opts.Margin + 20 + emuToPoints(img.Y)
+		imgW := emuToPoints(img.Width)
+		imgH := emuToPoints(img.Height)
+
+		// Ensure reasonable bounds
+		if imgW < 10 {
+			imgW = 100
+		}
+		if imgH < 10 {
+			imgH = 100
+		}
+		if imgW > contentWidth {
+			imgW = contentWidth
+		}
+		if imgH > contentHeight {
+			imgH = contentHeight
+		}
+
+		// Try to get actual image dimensions for aspect ratio
+		if file, err := os.Open(img.FilePath); err == nil {
+			if imgConfig, _, err := image.DecodeConfig(file); err == nil {
+				aspectRatio := float64(imgConfig.Width) / float64(imgConfig.Height)
+				if imgW/imgH > aspectRatio {
+					imgW = imgH * aspectRatio
+				} else {
+					imgH = imgW / aspectRatio
+				}
+			}
+			file.Close()
+		}
+
+		builder.AddImage(img.FilePath, imgX, imgY, imgW, imgH)
+	}
+
+	// Sort texts by Y position (top to bottom)
+	sortedTexts := make([]SlideText, len(slide.Texts))
+	copy(sortedTexts, slide.Texts)
+	sort.Slice(sortedTexts, func(i, j int) bool {
+		return sortedTexts[i].Y < sortedTexts[j].Y
+	})
+
+	// Draw text elements
+	for _, text := range sortedTexts {
+		if text.Content == "" {
+			continue
+		}
+
+		// Calculate position
+		textX := opts.Margin + emuToPoints(text.X)
+		textY := opts.Margin + 20 + emuToPoints(text.Y)
+
+		// Ensure text is within bounds
+		if textX < opts.Margin {
+			textX = opts.Margin
+		}
+		if textY < opts.Margin+20 {
+			textY = opts.Margin + 20
+		}
+
+		// Determine font size
+		fontSize := text.FontSize
+		if fontSize < 8 {
+			fontSize = 12
+		}
+		if fontSize > 48 {
+			fontSize = 48
+		}
+
+		// Title gets larger font
+		if text.IsTitle {
+			fontSize = 24
+			if text.FontSize > 24 {
+				fontSize = text.FontSize
 			}
 		}
 
-		builder.AddText(text.Content, textStyle)
-		builder.NewLine(textStyle.FontSize + 4)
+		// Create text style
+		style := pdf.DefaultStyle()
+		style.FontSize = fontSize
+		if text.Bold {
+			style.FontStyle = "B"
+		}
+
+		// Handle text color with smart fallback
+		if text.Color != "" {
+			style.TextColor = pdf.ParseHexColor(text.Color)
+			// Smart color fallback: if text is white/very light, make it dark
+			if style.TextColor.R > 240 && style.TextColor.G > 240 && style.TextColor.B > 240 {
+				style.TextColor = pdf.ColorBlack
+			}
+		}
+
+		builder.SetXY(textX, textY)
+		builder.SetFont(style.FontFamily, style.FontStyle, style.FontSize)
+		builder.SetTextColor(style.TextColor)
+
+		// Draw text lines
+		lines := strings.Split(text.Content, "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			builder.GetPdf().Text(line)
+			textY += fontSize + 4
+			builder.SetXY(textX, textY)
+		}
 	}
 
 	// Add slide number
 	slideNumStyle := pdf.DefaultStyle()
-	slideNumStyle.FontSize = 8
+	slideNumStyle.FontSize = 10
 	slideNumStyle.TextColor = pdf.ColorGray
-	builder.SetXY(opts.ContentWidth()-20, opts.ContentHeight()-10)
-	builder.AddText(fmt.Sprintf("Slide %d", slide.Index), slideNumStyle)
+	builder.SetXY(pageWidth-opts.Margin-40, pageHeight-opts.Margin)
+	builder.SetFont(slideNumStyle.FontFamily, "", slideNumStyle.FontSize)
+	builder.SetTextColor(slideNumStyle.TextColor)
+	builder.GetPdf().Text(fmt.Sprintf("Slide %d", slide.Index))
 }
 
 // HasLibreOffice returns whether LibreOffice is available

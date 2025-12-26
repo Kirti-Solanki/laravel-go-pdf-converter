@@ -4,6 +4,7 @@ namespace NikunjKothiya\GoPdfConverter;
 
 use NikunjKothiya\GoPdfConverter\Services\GoPdfService;
 use NikunjKothiya\GoPdfConverter\Jobs\ConvertToPdfJob;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * Fluent builder for single file PDF conversion
@@ -15,6 +16,7 @@ class PdfBuilder
     protected ?string $outputPath = null;
     protected ?string $disk = null;
     protected array $options = [];
+    protected array $tempFiles = [];
 
     public function __construct(GoPdfService $service, string $inputPath)
     {
@@ -311,10 +313,154 @@ class PdfBuilder
      */
     public function convert(): array
     {
+        $isCloud = $this->disk && $this->isCloudDisk($this->disk);
+        
+        if ($isCloud) {
+            return $this->convertFromCloud();
+        }
+        
         $inputPath = $this->resolvePath($this->inputPath);
         $outputPath = $this->resolvePath($this->outputPath ?? $this->generateOutputPath());
         
         return $this->service->convert($inputPath, $outputPath, $this->options);
+    }
+
+    /**
+     * Handle conversion for cloud storage (S3, GCS, etc.)
+     * Downloads file from cloud, converts locally, uploads result back
+     */
+    protected function convertFromCloud(): array
+    {
+        try {
+            // Download input file from cloud to temp location
+            $localInputPath = $this->downloadFromCloud($this->inputPath);
+            
+            // Generate local temp output path
+            $outputFileName = $this->outputPath ?? $this->generateOutputPath();
+            $localOutputPath = $this->getTempPath(basename($outputFileName));
+            
+            // Perform conversion locally
+            $result = $this->service->convert($localInputPath, $localOutputPath, $this->options);
+            
+            if ($result['success'] && file_exists($localOutputPath)) {
+                // Upload converted PDF back to cloud
+                $this->uploadToCloud($localOutputPath, $outputFileName);
+                
+                // Update result with cloud path
+                $result['output_file'] = $outputFileName;
+                $result['storage_disk'] = $this->disk;
+                $result['cloud_storage'] = true;
+            }
+            
+            return $result;
+        } finally {
+            // Cleanup temp files
+            $this->cleanupTempFiles();
+        }
+    }
+
+    /**
+     * Check if a disk is cloud-based (non-local)
+     */
+    protected function isCloudDisk(string $diskName): bool
+    {
+        try {
+            $disk = Storage::disk($diskName);
+            $adapter = $disk->getAdapter();
+            
+            // Check for common cloud adapter types
+            $adapterClass = get_class($adapter);
+            
+            $cloudAdapters = [
+                'League\Flysystem\AwsS3V3\AwsS3V3Adapter',
+                'League\Flysystem\AzureBlobStorage\AzureBlobStorageAdapter',
+                'League\Flysystem\GoogleCloudStorage\GoogleCloudStorageAdapter',
+                'League\Flysystem\Ftp\FtpAdapter',
+                'League\Flysystem\Sftp\SftpAdapter',
+                'Spatie\FlysystemDropbox\DropboxAdapter',
+            ];
+            
+            foreach ($cloudAdapters as $cloudAdapter) {
+                if ($adapter instanceof $cloudAdapter || $adapterClass === $cloudAdapter) {
+                    return true;
+                }
+            }
+            
+            // Also check if the disk config has a driver that's cloud-based
+            $config = config("filesystems.disks.{$diskName}");
+            if ($config) {
+                $cloudDrivers = ['s3', 'gcs', 'azure', 'ftp', 'sftp', 'dropbox', 'rackspace'];
+                if (isset($config['driver']) && in_array($config['driver'], $cloudDrivers)) {
+                    return true;
+                }
+            }
+            
+            return false;
+        } catch (\Exception $e) {
+            // If we can't determine, assume local
+            return false;
+        }
+    }
+
+    /**
+     * Download file from cloud storage to local temp directory
+     */
+    protected function downloadFromCloud(string $cloudPath): string
+    {
+        $disk = Storage::disk($this->disk);
+        
+        if (!$disk->exists($cloudPath)) {
+            throw new \NikunjKothiya\GoPdfConverter\Exceptions\FileNotFoundException(
+                "File not found on cloud storage: {$cloudPath}",
+                $cloudPath
+            );
+        }
+        
+        $localPath = $this->getTempPath(basename($cloudPath));
+        $contents = $disk->get($cloudPath);
+        
+        file_put_contents($localPath, $contents);
+        $this->tempFiles[] = $localPath;
+        
+        return $localPath;
+    }
+
+    /**
+     * Upload file to cloud storage
+     */
+    protected function uploadToCloud(string $localPath, string $cloudPath): bool
+    {
+        $disk = Storage::disk($this->disk);
+        $contents = file_get_contents($localPath);
+        
+        return $disk->put($cloudPath, $contents);
+    }
+
+    /**
+     * Get temp directory path for cloud operations
+     */
+    protected function getTempPath(string $filename): string
+    {
+        $tempDir = config('gopdf.temp_dir', sys_get_temp_dir() . '/gopdf');
+        
+        if (!is_dir($tempDir)) {
+            mkdir($tempDir, 0755, true);
+        }
+        
+        return $tempDir . '/' . uniqid('gopdf_') . '_' . $filename;
+    }
+
+    /**
+     * Cleanup temporary files created during cloud conversion
+     */
+    protected function cleanupTempFiles(): void
+    {
+        foreach ($this->tempFiles as $file) {
+            if (file_exists($file)) {
+                @unlink($file);
+            }
+        }
+        $this->tempFiles = [];
     }
 
     /**
@@ -324,13 +470,28 @@ class PdfBuilder
      */
     public function queue(?string $connection = null, ?string $queue = null)
     {
-        $inputPath = $this->resolvePath($this->inputPath);
-        $outputPath = $this->resolvePath($this->outputPath ?? $this->generateOutputPath());
+        $isCloud = $this->disk && $this->isCloudDisk($this->disk);
+        
+        if ($isCloud) {
+            // For cloud storage, pass disk info to job
+            $inputPath = $this->inputPath;
+            $outputPath = $this->outputPath ?? $this->generateOutputPath();
+        } else {
+            $inputPath = $this->resolvePath($this->inputPath);
+            $outputPath = $this->resolvePath($this->outputPath ?? $this->generateOutputPath());
+        }
+        
+        $options = $this->options;
+        if ($isCloud) {
+            $options['_cloud_disk'] = $this->disk;
+            $options['_cloud_input'] = $this->inputPath;
+            $options['_cloud_output'] = $this->outputPath ?? $this->generateOutputPath();
+        }
         
         $job = new ConvertToPdfJob(
             $inputPath,
             $outputPath,
-            $this->options
+            $options
         );
 
         if ($connection) {
@@ -382,7 +543,11 @@ class PdfBuilder
     protected function resolvePath(string $path): string
     {
         if ($this->disk) {
-            return \Illuminate\Support\Facades\Storage::disk($this->disk)->path($path);
+            // For cloud disks, don't try to get local path
+            if ($this->isCloudDisk($this->disk)) {
+                return $path;
+            }
+            return Storage::disk($this->disk)->path($path);
         }
 
         // If path is absolute, return it
